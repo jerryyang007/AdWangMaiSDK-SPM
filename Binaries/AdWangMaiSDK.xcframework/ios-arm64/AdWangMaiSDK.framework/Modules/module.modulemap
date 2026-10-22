@@ -1,0 +1,4 @@
+framework module AdWangMaiSDK {
+  umbrella header "AdWangMaiSDK.h"
+  export *
+}

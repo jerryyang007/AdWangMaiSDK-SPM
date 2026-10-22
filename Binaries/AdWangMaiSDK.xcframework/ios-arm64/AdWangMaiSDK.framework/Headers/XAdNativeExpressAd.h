@@ -1,0 +1,82 @@
+//
+//  XAdNativeExpressAd.h
+//  AdWangMaiSDK
+//
+//  Created by 周泽浩 on 2023/3/6.
+//
+
+#import <UIKit/UIKit.h>
+
+NS_ASSUME_NONNULL_BEGIN
+@protocol XAdNativeExpressDelegete;
+
+@interface XAdNativeExpressAd : UIView
+
+/// 代理
+@property (weak, nonatomic) id<XAdNativeExpressDelegete>delegate;
+
+/// 默认背景图  [可选]
+@property (nonatomic, strong) UIImage *backgroundImage;
+
+/// 是否需要满足HTTPS  [可选] 默认为NO
+@property (nonatomic,assign) BOOL secure;
+
+/// 是否屏蔽摇一摇，NO或者不赋值，不屏蔽，YES屏蔽
+@property (nonatomic, assign) BOOL disableShake;
+
+/// 视频类型时，是否静音。默认 YES。loadAdData 前设置。
+@property (nonatomic, assign) BOOL videoMuted;
+/// 是否屏蔽扭一扭，NO或者不赋值，不屏蔽，YES屏蔽
+@property (nonatomic, assign) BOOL disableTwist;
+
+/// 广告标记 [可选]
+@property (nonatomic,copy) NSString *adTag;
+
+/// [必选]开发者需传入用来弹出目标页的ViewController
+@property (nonatomic, weak) UIViewController *controller;
+
+/// 初始化广告
+/// - Parameters:
+///   - adSize: 广告视图尺寸
+///   - adSlotId: 广告位ID
+- (instancetype)initWithAdSize:(CGSize)adSize adSlotId:(NSString *)adSlotId;
+
+/// 请求广告
+- (void)loadAdData;
+
+/// 生成 S2S Token。
+- (nullable NSString *)getS2STokenWithAdSlotId:(NSString *)adSlotId;
+
+/// 加载 S2S 广告。接收媒体服务器返回的 S2S JSON。
+- (void)loadAdm:(NSString *)adm;
+
+/// 获取当前广告请求 ID，请求尚未发起时返回 nil。
+- (nullable NSString *)getRequestId;
+
+/**
+ 返回广告的eCPM，单位：分
+ 
+ @return 成功返回一个大于等于0的值，-1表示无权限或后台出现异常
+ */
+- (NSInteger)eCPM;
+
+/**
+ 广告是否有效
+ @return 广告有效返回YES  广告无效返回NO
+ */
+- (BOOL)isReady;
+
+/// 竞价成功上报，脉盟平台竞胜之后调用，需要在广告请求成功之后,展示之前调用，winInfo脉盟平台竞价获胜信息，可为nil。
+/// @param winInfo 竞胜信息 字典类型
+- (void)sendWinNotificationWithInfo:(NSDictionary *_Nullable)winInfo;
+
+/// 获取当前广告物料
+// material_url: 素材 url 数组
+// adTitle: 标题
+// adDescription:描述
+// crid:素材id/创意id
+- (NSDictionary *)getCurrentAdMaterialsInfo;
+
+@end
+
+NS_ASSUME_NONNULL_END

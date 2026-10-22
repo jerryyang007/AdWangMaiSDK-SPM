@@ -1,0 +1,81 @@
+//
+//  XAdNativeAd.h
+//  AdWangMaiSDK
+//
+//  Created by 周泽浩 on 2023/3/10.
+//
+
+#import <Foundation/Foundation.h>
+#import <UIKit/UIKit.h>
+
+NS_ASSUME_NONNULL_BEGIN
+@protocol XAdNativeDelegete;
+
+@interface XAdNativeAd : NSObject
+
+/// 代理
+@property (weak, nonatomic) id<XAdNativeDelegete>delegate;
+
+/// 是否需要满足HTTPS  [可选] 默认为NO
+@property (nonatomic,assign) BOOL secure;
+
+/// 视频物料是否静音,YES为静音  [可选]  默认为YES
+@property (nonatomic,assign) BOOL videoMuted;
+
+/// 是否自动播放  [可选] 默认为YES
+@property (nonatomic,assign) BOOL automaticallyPlay;
+
+/// [必选]开发者需传入用来弹出目标页的ViewController
+@property (nonatomic, weak) UIViewController *controller;
+
+/// 初始化广告
+/// - Parameter adSlotId: 广告位ID
+- (instancetype)initWithAdSlotId:(NSString *)adSlotId;
+
+/// 加载普通广告数据；首次调用后实例固定为普通模式，不能再接收 S2S Response。
+/// 请求进行中重复调用不会启动新请求或触发本次 LoadError；启用 Debug 日志时输出提示。
+/// 当前请求成功或失败后，允许再次调用同模式加载。
+- (void)loadAdData;
+
+/// 生成 S2S Token。
+- (nullable NSString *)getS2STokenWithAdSlotId:(NSString *)adSlotId;
+
+/// 加载 S2S 广告。接收媒体服务器返回的 S2S JSON。
+- (void)loadAdm:(NSString *)adm;
+
+/// 获取当前广告请求 ID，请求尚未发起时返回 nil。
+- (nullable NSString *)getRequestId;
+
+/**
+ 广告是否有效
+ @return 广告有效返回YES  广告无效返回NO
+ */
+- (BOOL)isReady;
+
+/// 视图注册方法
+/// - Parameter clickableViews: 可点击的视图数组，此数组内的广告元素才可以响应广告对应的点击事件
+- (void)registerClickableViews:(NSArray<UIView *> *_Nonnull)clickableViews;
+
+/// 广告数据渲染完毕，即将展示时需调用trackImpression方法。
+- (void)trackImpression;
+
+/// 播放视频
+- (void)play;
+
+/// 暂停视频
+- (void)pause;
+
+/// 播放静音开关
+/// @param flag 是否静音
+- (void)muteEnable:(BOOL)flag;
+
+/// 广告销毁
+- (void)onDestroy;
+
+/// 竞价成功上报，脉盟平台竞胜之后调用，需要在广告请求成功之后,展示之前调用，winInfo脉盟平台竞价获胜信息，可为nil。
+/// @param winInfo 竞胜信息 字典类型
+- (void)sendWinNotificationWithInfo:(NSDictionary *_Nullable)winInfo;
+
+@end
+
+NS_ASSUME_NONNULL_END

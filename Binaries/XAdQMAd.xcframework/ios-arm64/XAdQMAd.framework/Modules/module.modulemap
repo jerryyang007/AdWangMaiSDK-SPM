@@ -1,0 +1,4 @@
+framework module XAdQMAd {
+  umbrella header "XAdQMAd.h"
+  export *
+}
