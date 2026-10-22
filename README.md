@@ -2,12 +2,12 @@
 
 AdWangMaiSDK 与爱奇艺、Funtee、趣盟、Sigmob 四家适配器的 Swift Package Manager 二进制接入包。
 
-SDK 业务版本：`8.1.0.1`；包版本元数据：`0.1.0`。当前使用 `main` 分支接入，尚未创建版本 tag。
+SDK 业务版本：`8.1.0.1`；SPM 发布版本：`0.1.0`，对应仓库 tag `0.1.0`。
 
 ## Xcode 接入
 
 1. 在 Xcode 的 GitHub 账户中使用有权访问本私有仓库的账号。
-2. 通过 Add Package Dependencies 添加 `https://github.com/jerryyang007/AdWangMaiSDK-SPM.git`，依赖规则选择分支 `main`。
+2. 通过 Add Package Dependencies 添加 `https://github.com/jerryyang007/AdWangMaiSDK-SPM.git`，依赖规则选择 Exact Version（精确版本），填写 `0.1.0`。
 3. 为 App Target 选择 `AdWangMaiSDK` 和实际使用的适配器产品：
 
 | 平台 | 产品 |
@@ -27,6 +27,16 @@ python3 /absolute/path/AdWangMaiSDK-SPM/Tools/integrate.py \
 ```
 
 `--adapters` 与实际添加的产品保持一致；仅主 SDK 时省略该参数。多个 App Target 分别执行。之后构建自动添加自有及厂商资源，并启用 `-ObjC`，无需手动拖入 bundle。增删适配器或更新包后重跑集成命令；重复执行不会叠加阶段。
+
+## Package.swift 接入
+
+在宿主依赖中固定版本：
+
+```swift
+.package(url: "https://github.com/jerryyang007/AdWangMaiSDK-SPM.git", .exact("0.1.0"))
+```
+
+随后为宿主 Target 添加所需 `.product`；主 SDK 产品名为 `AdWangMaiSDK`，适配器产品名见上表。资源集成命令仍需执行一次。私有仓库拉取使用宿主配置的 GitHub 访问凭据，不把 Token 写入 URL 或 `Package.swift`。
 
 ## 业务引用
 
