@@ -1,0 +1,4 @@
+module XAdIQYAdSDK {
+  umbrella header "XAdIQYAdSDK.h"
+  export *
+}

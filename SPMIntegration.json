@@ -1,17 +1,17 @@
 {
   "format": 1,
   "package": "AdWangMaiSDK",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "resources": {
     "AdWangMaiSDKSupport": [
       "adwangmai_sdk.bundle",
       "AdWangMaiSDKPrivacy.bundle"
     ],
-    "XAdFunteeSDKAdSupport": [
-      "XrsImage.bundle"
-    ],
     "XAdIQYAdSDKSupport": [
       "QYResource.bundle"
+    ],
+    "XAdFunteeSDKAdSupport": [
+      "XrsImage.bundle"
     ],
     "XAdQMAdSupport": [],
     "XAdSigmobAdSupport": [
@@ -20,11 +20,11 @@
     ]
   },
   "adapters": {
-    "XAdFunteeSDKAd": [
-      "OneAdSDK"
-    ],
     "XAdIQYAdSDK": [
       "QySdk"
+    ],
+    "XAdFunteeSDKAd": [
+      "OneAdSDK"
     ],
     "XAdQMAd": [
       "QuMengAdSDK"

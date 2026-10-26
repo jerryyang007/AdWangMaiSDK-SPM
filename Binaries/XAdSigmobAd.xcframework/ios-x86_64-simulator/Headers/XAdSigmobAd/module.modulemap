@@ -1,0 +1,4 @@
+module XAdSigmobAd {
+  umbrella header "XAdSigmobAd.h"
+  export *
+}

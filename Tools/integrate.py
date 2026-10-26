@@ -14,13 +14,22 @@ except ImportError:
     from _project_settings import parse_project, serialize, target_configurations
 
 
-def _digest(path):
+def _digest(path, include_empty=False, control=None):
     # 路径长度、类型和固定长度内容摘要分开编码，避免不同目录结构拼成相同字节串。
     path = Path(path)
     if path.is_symlink(): raise ValueError('资源包不能是符号链接：' + str(path))
-    h = hashlib.sha256()
-    for p in sorted(path.rglob('*')):
+    entries = sorted(path.rglob('*'))
+    nonempty = set()
+    for p in entries:
+        if control: control.check()
         if p.is_symlink(): raise ValueError('资源包不能包含符号链接：' + str(p))
+        if p.is_file(): nonempty.update(p.parents)
+    h = hashlib.sha256()
+    for p in entries:
+        if control: control.check()
+        # Xcode 为历史/新增输出预建空目录，它们不代表资源内容变更；真实文件及其目录结构仍参与摘要。
+        # include_empty 只尝试匹配可验证的旧摘要；无法确认旧内容时拒绝覆盖并要求清理构建。
+        if p.is_dir() and not include_empty and p not in nonempty: continue
         relative = p.relative_to(path).as_posix().encode()
         h.update(b'F' if p.is_file() else b'D')
         h.update(len(relative).to_bytes(8, 'big'))
@@ -28,23 +37,45 @@ def _digest(path):
         if p.is_file():
             content = hashlib.sha256()
             with p.open('rb') as stream:
-                for chunk in iter(lambda: stream.read(1024 * 1024), b''): content.update(chunk)
+                # 网页导出可取消；独立宿主脚本不传 control，摘要格式与旧版本完全一致。
+                for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+                    if control: control.check()
+                    content.update(chunk)
             h.update(content.digest())
     return h.hexdigest()
 
 
 def sync_resources(spec, products, app):
-    """暂存后提交并记录意图；重试只接管哈希匹配的受管输出，宿主文件只借用。"""
+    """暂存后提交并记录意图；非空旧输出按哈希确认所有权，宿主内容只借用。"""
+    def empty_directory_tree(path):
+        # Xcode 会在脚本执行前为已声明的输出创建父目录；这些空目录尚不是宿主资源。
+        # 只接受不含任何文件或符号链接的目录树；不可读目录直接失败，不能当作空目录。
+        pending = [path]
+        while pending:
+            with os.scandir(pending.pop()) as entries:
+                for entry in entries:
+                    if entry.is_symlink() or not entry.is_dir(follow_symlinks=False): return False
+                    pending.append(entry.path)
+        return True
+
     products, app = Path(products).resolve(), Path(app).resolve()
     marker = app / '.xad-spm-resources.json'
     stage = app / '.xad-spm-stage'
     if marker.is_symlink() or stage.is_symlink(): raise ValueError('资源事务路径不能是符号链接')
     old = json.loads(marker.read_text()) if marker.exists() else {}
+    def ownership_error(name):
+        message = '受管资源已被宿主替换或摘要无法确认：' + name
+        if old.get('digest_format', 1) < 2:
+            message += '；旧版摘要若包含空目录，请执行 Xcode Product > Clean Build Folder 后重新构建'
+        return ValueError(message)
     managed = dict(old.get('managed', {}))
     borrowed = dict(old.get('borrowed', {}))
     pending = old.get('pending', {})
     previous = {n: {h} for n, h in managed.items()}
     for n, h in pending.get('managed', {}).items(): previous.setdefault(n, set()).add(h)
+    retired = set(old.get('retired', []))
+    if any(not isinstance(n, str) or Path(n).name != n or not n.endswith('.bundle') for n in retired):
+        raise ValueError('历史受管资源清单不合法')
     wrappers = dict(old.get('wrappers', {}))
     wrappers.update(pending.get('wrappers', {}))
     for mapping in (managed, borrowed, pending.get('managed', {}), pending.get('borrowed', {})):
@@ -65,19 +96,28 @@ def sync_resources(spec, products, app):
             if dest.is_symlink(): raise ValueError('输出资源不能是符号链接：' + name)
             if dest.exists():
                 actual = _digest(dest)
-                if name in previous:
-                    if actual not in previous[name] | {digest}: raise ValueError('受管资源已被宿主替换：' + name)
+                if actual != digest and empty_directory_tree(dest):
+                    # 冷构建和提交中断后的重试都可能先得到 Xcode 预建的空输出目录。
+                    next_managed[name] = digest
+                elif name in previous:
+                    if actual not in previous[name] | {digest} and _digest(dest, include_empty=True) not in previous[name]:
+                        raise ownership_error(name)
                     next_managed[name] = digest
                 else:
-                    if actual != digest: raise ValueError('宿主存在同名资源，拒绝覆盖：' + name)
-                    next_borrowed[name] = digest
+                    if actual == digest: next_borrowed[name] = digest
+                    else: raise ValueError('宿主存在同名资源，拒绝覆盖：' + name)
             else: next_managed[name] = digest
             planned[name] = (source, digest)
     for name, hashes in previous.items():
         if name in planned: continue
         dest = app / name
-        if dest.is_symlink() or (dest.exists() and _digest(dest) not in hashes):
-            raise ValueError('待清理资源已被宿主替换：' + name)
+        if dest.is_symlink() or (dest.exists() and not empty_directory_tree(dest)
+                                 and _digest(dest) not in hashes and _digest(dest, include_empty=True) not in hashes):
+            raise ownership_error(name)
+    # 只记住真正由脚本管理过的资源，借用的宿主同名资源永不进入持续清理清单。
+    retired = (retired | previous.keys()) - planned.keys()
+    for name in retired:
+        if (app / name).is_symlink(): raise ValueError('历史资源不能是符号链接：' + name)
     # 外层目录由 Xcode 创建，不能沿宿主符号链接清理包外目录；所有校验先于事务提交。
     for wrapper, names in wrappers.items():
         if Path(wrapper).name != wrapper or not wrapper.startswith('AdWangMaiSDK_'): raise ValueError('资源包装名称不合法')
@@ -94,7 +134,8 @@ def sync_resources(spec, products, app):
         temp = stage / 'marker.json'
         temp.write_text(json.dumps(record, sort_keys=True) + '\n')
         os.replace(temp, marker)
-    save({'managed': managed, 'borrowed': borrowed, 'wrappers': old.get('wrappers', {}),
+    save({'managed': managed, 'borrowed': borrowed, 'wrappers': old.get('wrappers', {}), 'retired': sorted(retired),
+          'digest_format': old.get('digest_format', 1),
           'pending': {'managed': next_managed, 'borrowed': next_borrowed, 'wrappers': wrappers}})
     for name in next_managed:
         dest = app / name
@@ -103,12 +144,17 @@ def sync_resources(spec, products, app):
     for name in previous.keys() - planned.keys():
         dest = app / name
         if dest.exists(): os.replace(dest, stage / ('removed-' + name))
+    # 历史输出权限必须保留到升级/撤销重试完成；后续增量构建会重新预建空父目录，需持续清理。
+    # 非空目录说明宿主已有实际文件，不能按历史名称删除。
+    for name in retired:
+        dest = app / name
+        if dest.exists() and empty_directory_tree(dest): shutil.rmtree(dest)
     # 只移除外层资源 bundle 中的嵌套副本，保留 Xcode 所拥有的外层目录和 Info.plist。
     for wrapper, names in wrappers.items():
         for name in names:
             nested = app / wrapper / name
             if nested.exists(): shutil.rmtree(nested)
-    save({'managed': next_managed, 'borrowed': next_borrowed, 'wrappers': wrappers})
+    save({'managed': next_managed, 'borrowed': next_borrowed, 'wrappers': wrappers, 'retired': sorted(retired), 'digest_format': 2})
     shutil.rmtree(stage)
 
 
@@ -123,8 +169,66 @@ def _script(spec):
             'XAD_SPM_RESOURCES\n')
 
 
+def _resource_file_lists(meta, package, spec, previous_outputs):
+    """逐项声明资源树与事务路径；目录节点本身不能授予沙箱对子文件的访问。"""
+    products = '$(BUILT_PRODUCTS_DIR)/'
+    app = '$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/'
+    inputs = []
+    outputs = list(previous_outputs) + [app + '.xad-spm-resources.json', app + '.xad-spm-stage',
+                                        app + '.xad-spm-stage/marker.json']
+    for target, names in meta['resources'].items():
+        wrapper = 'AdWangMaiSDK_' + target + '.bundle'
+        for name in names:
+            selected = name in spec.get(target, [])
+            if selected:
+                # SwiftPM 的 App 资源复制可能与脚本融合调度；显式等待外层 bundle 复制完成再去重。
+                # 仅依赖 BUILT_PRODUCTS_DIR 中的素材无法约束最终 App 的 Copy 任务。
+                inputs.append(app + wrapper)
+            if not selected and app + name not in previous_outputs:
+                continue
+            if Path(name).name != name or not name.endswith('.bundle'):
+                raise ValueError('资源名称不合法：' + name)
+            source = Path(package) / 'Sources' / target / 'Resources' / name
+            if not source.is_dir():
+                if selected: raise ValueError('包内资源缺失：' + str(source))
+                continue
+            # 旧安装阶段只有 bundle 目录声明；首次迁移时也补齐其清理所需的目录内容。
+            entries = [source, *sorted(source.rglob('*'))]
+            for path in entries:
+                if path.is_symlink(): raise ValueError('资源包不能包含符号链接：' + str(path))
+                suffix = '' if path == source else '/' + path.relative_to(source).as_posix()
+                if '\n' in suffix or '\r' in suffix: raise ValueError('资源路径不能包含换行')
+                if selected: inputs.append(products + wrapper + '/' + name + suffix)
+                outputs.extend([app + name + suffix, app + wrapper + '/' + name + suffix])
+    # 保留历史文件声明，使升级、撤销适配器及中断重试仍可读取、移动和清理旧资源。
+    # 暂存区内的新副本、previous-*、removed-* 都使用同一相对目录清单。
+    for output in list(outputs):
+        if not output.startswith(app): continue
+        relative = output[len(app):]
+        first = relative.split('/', 1)[0]
+        if not first.endswith('.bundle') or first.startswith('AdWangMaiSDK_'): continue
+        for prefix in ('', 'previous-', 'removed-'):
+            outputs.append(app + '.xad-spm-stage/' + prefix + relative)
+    return list(dict.fromkeys(inputs)), list(dict.fromkeys(outputs))
+
+
+def _write_file_list(path, entries):
+    """将共享清单原子写入宿主工程；重复集成不改写相同内容，也不跟随符号链接。"""
+    if path.is_symlink() or path.parent.is_symlink() or path.parent.parent.is_symlink():
+        raise ValueError('资源文件清单不能是符号链接：' + str(path))
+    text = ''.join(entry + '\n' for entry in entries)
+    if path.exists() and path.read_text() == text: return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix='.xad-spm-', dir=path.parent)
+    try:
+        with os.fdopen(fd, 'w') as stream: stream.write(text)
+        os.replace(temporary, path)
+    finally:
+        if Path(temporary).exists(): Path(temporary).unlink()
+
+
 def install(project, target, package, adapters):
-    """幂等编辑指定 Target；其他 Target、已有 flags 和用户工程内容保持。"""
+    """幂等安装指定 Target 的阶段和共享文件清单，保持其他 Target、已有 flags 与沙箱设置。"""
     project = Path(project)
     path = project / 'project.pbxproj'
     if path.is_symlink(): raise ValueError('工程文件不能是符号链接')
@@ -141,13 +245,19 @@ def install(project, target, package, adapters):
     phase_id = hashlib.sha256(('XAdSPM:' + tid).encode()).hexdigest()[:24].upper()
     existing = objects.members.get(phase_id)
     if existing and existing.value.get('name') != 'XAdSPM 自动资源': raise ValueError('工程对象 ID 冲突')
-    inputs = ['$(BUILT_PRODUCTS_DIR)/AdWangMaiSDK_' + x + '.bundle' for x in spec]
-    names = sorted({n for ns in spec.values() for n in ns})
-    outputs = ['$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/' + x for x in [*names, '.xad-spm-resources.json', '.xad-spm-stage', *['AdWangMaiSDK_' + x + '.bundle/' + n for x, ns in spec.items() for n in ns]]]
-    if existing:
-        outputs = list(dict.fromkeys([*existing.value.get('outputPaths', []), *outputs]))
+    list_directory = 'xcshareddata/XAdSPM/'
+    input_list = project / list_directory / (phase_id + '-inputs.xcfilelist')
+    output_list = project / list_directory / (phase_id + '-outputs.xcfilelist')
+    previous_outputs = list(existing.value.get('outputPaths', [])) if existing else []
+    if output_list.is_symlink(): raise ValueError('资源文件清单不能是符号链接')
+    if existing and output_list.exists(): previous_outputs.extend(output_list.read_text().splitlines())
+    inputs, outputs = _resource_file_lists(meta, package, spec, previous_outputs)
+    # 文件清单由 Xcode 展开，不为每个路径导出一个环境变量，避免完整资源树触及参数长度上限。
     phase = {'isa': 'PBXShellScriptBuildPhase', 'buildActionMask': '2147483647', 'files': [],
-             'inputPaths': inputs, 'outputPaths': outputs, 'name': 'XAdSPM 自动资源',
+             'inputPaths': [], 'outputPaths': [],
+             'inputFileListPaths': ['$(PROJECT_FILE_PATH)/' + list_directory + input_list.name],
+             'outputFileListPaths': ['$(PROJECT_FILE_PATH)/' + list_directory + output_list.name],
+             'name': 'XAdSPM 自动资源',
              'shellPath': '/bin/sh', 'shellScript': _script(spec), 'alwaysOutOfDate': '1',
              'showEnvVarsInLog': '0', 'runOnlyForDeploymentPostprocessing': '0'}
     rendered = '{\n' + ''.join('\t' + serialize(k) + ' = ' + serialize(v) + ';\n' for k, v in phase.items()) + '}'
@@ -168,8 +278,10 @@ def install(project, target, package, adapters):
         else: edits.append((settings.end - 1, settings.end - 1, '\nOTHER_LDFLAGS = ' + serialize(flags) + ';\n'))
     for start, end, value in sorted(edits, reverse=True): text = text[:start] + value + text[end:]
     parse_project(text)
-    if text == original: return
     if path.read_text() != original: raise ValueError('工程被并发修改，拒绝覆盖')
+    _write_file_list(input_list, inputs)
+    _write_file_list(output_list, outputs)
+    if text == original: return
     fd, temporary = tempfile.mkstemp(prefix='.xad-spm-', dir=path.parent)
     try:
         with os.fdopen(fd, 'w') as stream: stream.write(text)

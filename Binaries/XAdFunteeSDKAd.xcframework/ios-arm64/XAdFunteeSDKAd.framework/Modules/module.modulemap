@@ -1,4 +1,0 @@
-framework module XAdFunteeSDKAd {
-  umbrella header "XAdFunteeSDKAd.h"
-  export *
-}

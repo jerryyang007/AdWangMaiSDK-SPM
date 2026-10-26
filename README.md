@@ -2,12 +2,12 @@
 
 AdWangMaiSDK 与爱奇艺、Funtee、趣盟、Sigmob 四家适配器的 Swift Package Manager 二进制接入包。
 
-SDK 业务版本：`8.1.0.1`；SPM 发布版本：`0.1.0`，对应仓库 tag `0.1.0`。
+SDK 业务版本：`8.1.0.1`；SPM 发布版本：`0.1.1`，对应仓库 tag `0.1.1`。
 
 ## Xcode 接入
 
 1. 在 Xcode 的 GitHub 账户中使用有权访问本私有仓库的账号。
-2. 通过 Add Package Dependencies 添加 `https://github.com/jerryyang007/AdWangMaiSDK-SPM.git`，依赖规则选择 Exact Version（精确版本），填写 `0.1.0`。
+2. 通过 Add Package Dependencies 添加 `https://github.com/jerryyang007/AdWangMaiSDK-SPM.git`，依赖规则选择 Exact Version（精确版本），填写 `0.1.1`。
 3. 为 App Target 选择 `AdWangMaiSDK` 和实际使用的适配器产品：
 
 | 平台 | 产品 |
